@@ -84,6 +84,7 @@ private:
     bool                 fulldraw = true;             //buffer is cleared (need to redraw full screen)
     Array<SwTask*>       tasks;                       //async task list
     Array<SwSurface*>    compositors;                 //render targets cache list
+    Array<RenderRegion>  cnvRegions;                 //consolidated regions for the post rendering stage
     RenderDirtyRegion    dirtyRegion;                 //partial rendering support
 
     ~SwRenderer();

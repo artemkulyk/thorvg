@@ -354,7 +354,21 @@ bool SwRenderer::postRender()
 {
     //Unmultiply alpha if needed
     if (surface->cs == ColorSpace::ABGR8888S || surface->cs == ColorSpace::ARGB8888S) {
-        rasterUnpremultiply(surface);
+        if (fulldraw || dirtyRegion.deactivated()) {
+            rasterUnpremultiply(surface);
+        } else {
+            /* In the partial rendering mode, only the regions rendered in this frame hold
+               premultiplied pixels. The rest of the buffer has been already converted
+               in the previous frames. Each pixel is converted exactly once by consolidating
+               the dirty regions into a disjoint set. The regions drawn through the
+               intermediate composited surfaces are covered by the dirty regions as well. */
+            for (int idx = 0; idx < RenderDirtyRegion::PARTITIONING; ++idx) {
+                dirtyRegion.consolidate(idx, cnvRegions);
+                ARRAY_FOREACH(p, cnvRegions) {
+                    rasterUnpremultiply(surface, *p);
+                }
+            }
+        }
     }
 
     dirtyRegion.clear();
