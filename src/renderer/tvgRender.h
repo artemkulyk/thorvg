@@ -192,6 +192,9 @@ struct RenderRegion
 
         void init(uint32_t w, uint32_t h);
         void commit();
+        //Merge the committed dirty regions into a disjoint set of regions.
+        //The output list is cleared before being filled.
+        void consolidate(uint32_t idx, Array<RenderRegion>& output);
         bool add(const RenderRegion& bbox);
         bool add(const RenderRegion& prv, const RenderRegion& cur);  //collect the old and new dirty regions together
         void clear();
@@ -218,7 +221,13 @@ struct RenderRegion
         }
 
     private:
-        void subdivide(Array<RenderRegion>& targets, uint32_t idx, RenderRegion& lhs, RenderRegion& rhs);
+        static bool subdivide(Array<RenderRegion>& targets, uint32_t idx, RenderRegion& lhs, RenderRegion& rhs);
+        //Merge the regions in the working list into the disjoint output list.
+        //Returns false if the working list capacity is insufficient, leaving the regions unmodified.
+        static bool sweepMerge(Array<RenderRegion>& targets, Array<RenderRegion>& output);
+        //Merge the input regions into the disjoint output list. The working list is enlarged
+        //and the merge restarted if the produced fragments exceed its capacity.
+        void merge(const Array<RenderRegion>& input, Array<RenderRegion>& output);
 
         struct Partition
         {
@@ -229,6 +238,7 @@ struct RenderRegion
 
         Key key;
         Partition partitions[PARTITIONING];
+        Array<RenderRegion> scratch;  //working list for the merge()
         bool disabled = false;
     };
 #else
@@ -239,6 +249,7 @@ struct RenderRegion
 
         void init(uint32_t w, uint32_t h) {}
         void commit() {}
+        void consolidate(TVG_UNUSED uint32_t idx, TVG_UNUSED Array<RenderRegion>& output) {}
         bool add(TVG_UNUSED const RenderRegion& bbox) { return true; }
         bool add(TVG_UNUSED const RenderRegion& prv, TVG_UNUSED const RenderRegion& cur) { return true; }
         void clear() {}
