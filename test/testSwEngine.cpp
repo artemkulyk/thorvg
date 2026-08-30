@@ -408,6 +408,20 @@ TEST_CASE("Intersection", "[tvgSwEngine]")
 }
 
 #ifdef THORVG_PARTIAL_RENDER_SUPPORT
+
+//Compares the buffers per pixel: a whole-vector REQUIRE would expand
+//hundreds of thousands of values under --success and slow the test.
+static void requireBuffersEqual(const vector<uint32_t>& incremental, const vector<uint32_t>& fresh, uint32_t w)
+{
+    for (size_t i = 0; i < incremental.size(); ++i) {
+        if (incremental[i] != fresh[i]) {
+            FAIL("first mismatch at (" << i % w << ", " << i / w << "): "
+                 << "incremental=0x" << hex << incremental[i] << " fresh=0x" << fresh[i]);
+        }
+    }
+    REQUIRE(true);
+}
+
 TEST_CASE("Partial Rendering. Composited scene consistency", "[tvgSwEngine]")
 {
     REQUIRE(Initializer::init() == Result::Success);
@@ -459,7 +473,7 @@ TEST_CASE("Partial Rendering. Composited scene consistency", "[tvgSwEngine]")
             REQUIRE(canvas->draw(true) == Result::Success);
             REQUIRE(canvas->sync() == Result::Success);
         }
-        REQUIRE(incremental == fresh);
+        requireBuffersEqual(incremental, fresh, W);
     }
     REQUIRE(Initializer::term() == Result::Success);
 }
@@ -511,7 +525,7 @@ TEST_CASE("Partial Rendering. Fragmented regions consistency", "[tvgSwEngine]")
             REQUIRE(canvas->draw(true) == Result::Success);
             REQUIRE(canvas->sync() == Result::Success);
         }
-        REQUIRE(incremental == fresh);
+        requireBuffersEqual(incremental, fresh, W);
     }
     REQUIRE(Initializer::term() == Result::Success);
 }
@@ -572,7 +586,7 @@ TEST_CASE("Partial Rendering. Heavy region fragmentation consistency", "[tvgSwEn
             REQUIRE(canvas->draw(true) == Result::Success);
             REQUIRE(canvas->sync() == Result::Success);
         }
-        REQUIRE(incremental == fresh);
+        requireBuffersEqual(incremental, fresh, W);
     }
     REQUIRE(Initializer::term() == Result::Success);
 }
