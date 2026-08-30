@@ -470,15 +470,9 @@ void RenderDirtyRegion::merge(const Array<RenderRegion>& input, Array<RenderRegi
         if (sweepMerge(scratch, output)) return;
 
         //the region fragments exceeded the working list. enlarge it and restart.
-        TVGERR("RENDERER", "regions(%d) overflown the reserved(%d) working list. retrying...", input.count, scratch.reserved);
+        TVGLOG("RENDERER", "regions(%d) overflown the reserved(%d) working list. retrying...", input.count, scratch.reserved);
         scratch.reserve(scratch.reserved * 2);
     }
-}
-
-
-void RenderDirtyRegion::consolidate(uint32_t idx, Array<RenderRegion>& output)
-{
-    merge(partitions[idx].list[partitions[idx].current], output);
 }
 
 #endif

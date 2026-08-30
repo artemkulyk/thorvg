@@ -189,6 +189,7 @@
 */
 
 #include <limits.h>
+#include <cstdint>
 #include "tvgSwCommon.h"
 
 /************************************************************************/
@@ -197,11 +198,6 @@
 
 constexpr auto PIXEL_BITS = 8;   //must be at least 6 bits!
 constexpr auto ONE_PIXEL = (1 << PIXEL_BITS);
-
-struct Band
-{
-    int32_t min, max;
-};
 
 struct RawCell
 {
@@ -401,41 +397,64 @@ static void _sweep(RleWorker& rw)
 }
 
 
-static void _layout(RleWorker& rw)
+static uint32_t _tableBytes(int32_t yCnt)
+{
+    if (yCnt < 0) return ~0u;
+    auto bytes = (uint64_t(yCnt) + 1) * 2 * sizeof(uint32_t);
+    bytes = (bytes + 7) & ~uint64_t(7);
+    if (bytes > ~0u) return ~0u;
+    return uint32_t(bytes);
+}
+
+
+static bool _layout(RleWorker& rw)
 {
     //carve the scratch buffer: row tables at the head, the appended cells after.
     //the raw capacity is computed in integers to avoid a pointer-subtraction UB
     //that could produce a huge rawMax (the tables and the cells are distinct arrays).
-    auto tableBytes = (2 * (rw.yCnt + 1) * sizeof(uint32_t) + 7) & ~(uint32_t)7;    //rowTable + rowPos
+    auto tableBytes = _tableBytes(rw.yCnt);
+    if (tableBytes >= rw.bufferSize) {
+        rw.rawMax = 0;
+        return false;
+    }
+    auto rawMax = (rw.bufferSize - tableBytes) / sizeof(RawCell);
+    if (rawMax == 0) {
+        rw.rawMax = 0;
+        return false;
+    }
     rw.rowTable = static_cast<uint32_t*>(rw.buffer);
     rw.rowPos = rw.rowTable + (rw.yCnt + 1);
     rw.raw = reinterpret_cast<RawCell*>((char*)rw.buffer + tableBytes);
-    rw.rawMax = (rw.bufferSize - tableBytes) / sizeof(RawCell);
+    rw.rawMax = rawMax;
+    return true;
 }
 
 
 static bool _growCells(RleWorker& rw)
 {
+    auto tableBytes = _tableBytes(rw.yCnt);
+    if (tableBytes > ~0u - sizeof(RawCell)) return false;
+    auto minSize = tableBytes + uint32_t(sizeof(RawCell));
     auto sz = rw.bufferSize + (rw.bufferSize >> 1);   //grow by 1.5x
+    if (sz < rw.bufferSize) return false;             //overflow
+    if (sz < minSize) sz = minSize;
     sz = ((sz + sizeof(RawCell) - 1) / sizeof(RawCell)) * sizeof(RawCell);
     auto buffer = tvg::malloc<RawCell>(sz);
     if (!buffer) return false;
-    memcpy(buffer, rw.buffer, rw.bufferSize);
+    if (rw.buffer && rw.bufferSize) memcpy(buffer, rw.buffer, rw.bufferSize);
     tvg::free(rw.buffer);
     rw.buffer = buffer;
     rw.bufferSize = sz;
     rw.pool->buffer = reinterpret_cast<SwCell*>(buffer);
     rw.pool->size = sz;
-    _layout(rw);
-
-    return true;
+    return _layout(rw);
 }
 
 
 static bool _recordCell(RleWorker& rw)
 {
     if (rw.area | rw.cover) {
-        if (rw.rawCnt >= rw.rawMax) {
+        while (rw.rawCnt >= rw.rawMax) {
             if (!_growCells(rw)) return false;
         }
         auto cell = rw.raw + rw.rawCnt++;
@@ -456,8 +475,6 @@ static bool _sortCells(RleWorker& rw)
     auto n = rw.rawCnt;
     auto table = rw.rowTable;
     auto raw = rw.raw;
-
-    //For tiny shapes the counting partition overhead dominates; a single sort is faster.
     auto pos = rw.rowPos;
 
     //counting partition by row. coverage accumulation is a commutative addition,
@@ -832,13 +849,19 @@ SwRle* rleRender(SwRle* rle, const SwOutline* outline, const RenderRegion& bbox,
 
     RleWorker rw;
     auto cellPool = mpool->cell(tid);
-    auto reqSize = uint32_t(std::max(bbox.w(), bbox.h()) * 0.75f) * sizeof(RawCell);  //experimental decision
+    auto dim = std::max(bbox.w(), bbox.h());
+    uint32_t reqSize = 0;
+    auto reqBytes = uint64_t(dim) * 3 / 4 * sizeof(RawCell);  //experimental: 0.75 of the long side
+    if (reqBytes <= ~0u) reqSize = uint32_t(reqBytes);
 
     // grow by 1.25x and align to multiple of sizeof(RawCell)
     if (reqSize > cellPool->size) {
-        cellPool->size = ((reqSize + (reqSize >> 2)) / sizeof(RawCell)) * sizeof(RawCell);
+        auto newSize = ((reqSize + (reqSize >> 2)) / sizeof(RawCell)) * sizeof(RawCell);
+        auto buffer = tvg::malloc<RawCell>(newSize);
+        if (!buffer) return nullptr;
         tvg::free(cellPool->buffer);
-        cellPool->buffer = reinterpret_cast<SwCell*>(tvg::malloc<RawCell>(cellPool->size));
+        cellPool->buffer = reinterpret_cast<SwCell*>(buffer);
+        cellPool->size = newSize;
     }
 
     //Init Cells
@@ -858,6 +881,7 @@ SwRle* rleRender(SwRle* rle, const SwOutline* outline, const RenderRegion& bbox,
     rw.outline = const_cast<SwOutline*>(outline);
     rw.bandSize = rw.bufferSize / (sizeof(RawCell) * 2);
     rw.antiAlias = antiAlias;
+    if (rw.bandSize == 0) return nullptr;
 
     if (!rle) rw.rle = new SwRle;
     else rw.rle = rle;
@@ -886,9 +910,13 @@ SwRle* rleRender(SwRle* rle, const SwOutline* outline, const RenderRegion& bbox,
         rw.cellMin.y = min;
         rw.cellMax.y = max;
         rw.cellYCnt = max - min;
-        _layout(rw);
         rw.rawCnt = 0;
         rw.invalid = true;
+
+        if (!_layout(rw) && !_growCells(rw)) {
+            rleFree(rw.rle);
+            return nullptr;
+        }
 
         if (!_genRle(rw) || !_sortCells(rw)) {
             rleFree(rw.rle);

@@ -192,9 +192,6 @@ struct RenderRegion
 
         void init(uint32_t w, uint32_t h);
         void commit();
-        //Merge the committed dirty regions into a disjoint set of regions.
-        //The output list is cleared before being filled.
-        void consolidate(uint32_t idx, Array<RenderRegion>& output);
         bool add(const RenderRegion& bbox);
         bool add(const RenderRegion& prv, const RenderRegion& cur);  //collect the old and new dirty regions together
         void clear();
@@ -249,7 +246,6 @@ struct RenderRegion
 
         void init(uint32_t w, uint32_t h) {}
         void commit() {}
-        void consolidate(TVG_UNUSED uint32_t idx, TVG_UNUSED Array<RenderRegion>& output) {}
         bool add(TVG_UNUSED const RenderRegion& bbox) { return true; }
         bool add(TVG_UNUSED const RenderRegion& prv, TVG_UNUSED const RenderRegion& cur) { return true; }
         void clear() {}
